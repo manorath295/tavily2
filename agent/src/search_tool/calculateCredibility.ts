@@ -32,10 +32,14 @@ export const calculateCredibilityStep = RunnableLambda.from(
 
     // Calculate overall credibility score
     const totalScore = verifiedClaims.reduce((sum: number, claim: any) => {
-      const baseScore = VERDICT_SCORES[claim.verdict] || 50;
+      // Get base score - use !== undefined to allow 0 for False verdict
+      const baseScore =
+        VERDICT_SCORES[claim.verdict] !== undefined
+          ? VERDICT_SCORES[claim.verdict]
+          : 50;
       const weightedScore = baseScore * (claim.confidence / 100);
       console.log(
-        `  - "${claim.claim.slice(0, 40)}...": ${claim.verdict} (${claim.confidence}%) → Score: ${weightedScore.toFixed(1)}`,
+        `  - "${claim.claim.slice(0, 40)}...": ${claim.verdict} (${claim.confidence}%) → Base: ${baseScore}, Weighted: ${weightedScore.toFixed(1)}`,
       );
       return sum + weightedScore;
     }, 0);

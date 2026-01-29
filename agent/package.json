@@ -4,8 +4,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev":"tsx src/index.ts"
-
+    "dev": "tsx src/index.ts"
   },
   "keywords": [],
   "author": "",
@@ -23,10 +22,13 @@
     "express": "^5.1.0",
     "html-to-text": "^9.0.5",
     "tsx": "^4.20.6",
+    "twilio": "^5.12.0",
     "typescript": "^5.9.3",
+    "wikipedia": "^2.4.2",
     "zod": "^4.1.12"
   },
   "devDependencies": {
-    "@types/html-to-text": "^9.0.4"
+    "@types/html-to-text": "^9.0.4",
+    "@types/twilio": "^3.19.2"
   }
 }

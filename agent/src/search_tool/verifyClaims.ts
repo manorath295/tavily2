@@ -3,23 +3,33 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { getChatModel } from "../shared/model";
 import { webSearch } from "../utils/webSearch";
 
-const VERIFICATION_PROMPT = `You are a fact-checking expert. Analyze the evidence and determine if the claim is true or false.
+const VERIFICATION_PROMPT = `You are a fact-checking expert. Your ONLY job is to analyze the evidence provided from web searches and determine if the claim is supported by that evidence.
+
+CRITICAL RULES:
+1. Base your verdict ONLY on the evidence provided below
+2. DO NOT use your own knowledge or training data
+3. If multiple credible sources support the claim, it is likely TRUE
+4. If multiple credible sources contradict the claim, it is likely FALSE
+5. If sources are mixed or unclear, mark as MIXED or UNVERIFIABLE
 
 Rate the claim as:
-- "True": Fully supported by credible evidence
-- "Mostly True": Largely accurate with minor issues
-- "Mixed": Partially true and partially false
-- "Mostly False": Largely inaccurate
-- "False": Completely contradicted by evidence
-- "Unverifiable": Insufficient evidence
+- "True": Fully supported by the provided evidence (3+ sources agree)
+- "Mostly True": Largely supported by evidence with minor discrepancies
+- "Mixed": Evidence is contradictory or unclear
+- "Mostly False": Largely contradicted by evidence
+- "False": Completely contradicted by the provided evidence (3+ sources disagree)
+- "Unverifiable": Insufficient or unreliable evidence
 
-Provide a confidence score (0-100) and brief explanation.
+Provide a confidence score (0-100) based on:
+- Number of sources agreeing
+- Quality/credibility of sources
+- Consistency of information
 
 Format your response as JSON:
 {
   "verdict": "True|Mostly True|Mixed|Mostly False|False|Unverifiable",
   "confidence": 85,
-  "explanation": "brief explanation"
+  "explanation": "brief explanation based ONLY on the evidence provided"
 }`;
 
 interface ClaimVerificationResult {
@@ -58,14 +68,57 @@ export const verifyClaimsStep = RunnableLambda.from(async (input: any) => {
     console.log(`\n🔍 Verifying claim: "${claim}"`);
 
     try {
-      // Search for evidence
+      // Enhance search query with context for better results
+      // Add year/date context to avoid confusion with historical events
+      const currentYear = new Date().getFullYear();
+      const enhancedQuery = `${claim} ${currentYear}`;
+
+      console.log(`🔍 Enhanced search query: "${enhancedQuery}"`);
+
+      // Search for evidence from Tavily
       console.log("🌐 Calling Tavily Search API...");
-      const searchResults = await webSearch(claim);
+      const searchResults = await webSearch(enhancedQuery);
       console.log(`✅ Tavily returned ${searchResults.length} results`);
 
-      const evidenceContext = searchResults
+      // Try to get Wikipedia results from Python service (optional)
+      let wikiContext = "";
+      try {
+        const { searchWikipediaPython } =
+          await import("../utils/wikipediaPython");
+        const wikiResults = await searchWikipediaPython(claim, 2);
+
+        if (wikiResults.length > 0) {
+          console.log(
+            `✅ Wikipedia-Python returned ${wikiResults.length} results`,
+          );
+          console.log("📚 Wikipedia results:");
+          wikiResults.forEach((w, i) => {
+            console.log(`  [W${i + 1}] ${w.title}`);
+            console.log(`       ${w.summary.slice(0, 100)}...`);
+            console.log(`       ${w.url}`);
+          });
+
+          wikiContext = "\n\n=== Wikipedia (Authoritative) ===\n";
+          wikiContext += wikiResults
+            .map(
+              (w, i) =>
+                `[W${i + 1}] ${w.title}\n${w.summary}\nSource: ${w.url}`,
+            )
+            .join("\n\n");
+        }
+      } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        console.log(`⚠️ Wikipedia service error: ${errorMsg}`);
+        console.log("   Continuing with Tavily only");
+      }
+
+      // Format evidence from Tavily
+      let evidenceContext = searchResults
         .map((r, i) => `[${i + 1}] ${r.title}\n${r.snippet}\nSource: ${r.url}`)
         .join("\n\n");
+
+      // Add Wikipedia context if available
+      evidenceContext += wikiContext;
 
       console.log(
         "📚 Evidence context prepared, length:",
@@ -77,7 +130,7 @@ export const verifyClaimsStep = RunnableLambda.from(async (input: any) => {
       const response = await model.invoke([
         new SystemMessage(VERIFICATION_PROMPT),
         new HumanMessage(
-          `Claim: "${claim}"\n\nEvidence:\n${evidenceContext}\n\nVerdict:`,
+          `Claim to verify: "${claim}"\n\nEvidence from web search:\n${evidenceContext}\n\nBased ONLY on the evidence above (not your training data), what is your verdict?`,
         ),
       ]);
 
@@ -110,6 +163,7 @@ export const verifyClaimsStep = RunnableLambda.from(async (input: any) => {
 
       console.log(`✅ Verdict: ${verdict} (Confidence: ${confidence}%)`);
 
+      // Collect evidence from Tavily
       const claimEvidence = searchResults.map((r) => ({
         source: r.url,
         title: r.title,
