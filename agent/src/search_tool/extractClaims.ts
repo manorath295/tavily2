@@ -4,26 +4,24 @@ import { getChatModel } from "../shared/model";
 import { FactCheckInput } from "../utils/schemas";
 import { openUrl } from "../utils/openUrl";
 
-const CLAIM_EXTRACTION_PROMPT = `You are a fact-checking assistant. Extract the PRIMARY factual claim from the given content.
+const CLAIM_EXTRACTION_PROMPT = `Extract the main factual claim to verify from the input. Convert questions to statements.
 
-CRITICAL RULES:
-1. Extract ONLY the MAIN claim - do NOT break it into multiple sub-claims
-2. Focus on the most important, verifiable statement
-3. Ignore minor details, quotes, or supporting information
-4. Return a SINGLE claim that captures the core assertion
-5. If there are multiple unrelated claims, extract only the most significant one
+Rules:
+- Extract ONE main claim only
+- If input is a question, convert to a statement
+- Focus on what can be fact-checked
+- Keep it simple and clear
 
 Examples:
-Input: "Arijit Singh, Bollywood's voice of love, retires from playback singing: 'It was a wonderful journey'"
-Output: {"claims": ["Arijit Singh retires from playback singing"]}
+"Elon Musk bought Twitter for $44 billion" → {"claims": ["Elon Musk bought Twitter for $44 billion"]}
+"Is the Earth flat?" → {"claims": ["The Earth is flat"]}
+"Did India win the cricket match yesterday?" → {"claims": ["India won the cricket match yesterday"]}
+"COVID vaccine causes autism" → {"claims": ["COVID vaccine causes autism"]}
+"Tell me about climate change" → {"claims": []}
+"What is the capital of France?" → {"claims": []}
 
-Input: "Elon Musk buys Twitter for $44 billion and renames it to X"
-Output: {"claims": ["Elon Musk bought Twitter for $44 billion"]}
-
-Format your response as:
-{
-  "claims": ["single main claim here"]
-}`;
+Return format:
+{"claims": ["claim here"]} or {"claims": []} if no verifiable claim`;
 
 export const extractClaimsStep = RunnableLambda.from(
   async (input: FactCheckInput) => {
