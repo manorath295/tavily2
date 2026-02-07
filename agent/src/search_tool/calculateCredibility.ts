@@ -75,23 +75,67 @@ export const calculateCredibilityStep = RunnableLambda.from(
 
     console.log(`📚 Unique sources: ${sources.length}`);
 
-    // Generate summary
-    const trueClaims = verifiedClaims.filter((c: any) =>
-      c.verdict.includes("True"),
-    ).length;
-    const falseClaims = verifiedClaims.filter((c: any) =>
-      c.verdict.includes("False"),
-    ).length;
+    // Generate detailed summary with context
+    let summary = "";
 
-    let summary = `Analysis of ${verifiedClaims.length} claim(s): `;
-    if (trueClaims > falseClaims) {
-      summary += `${trueClaims} verified as true or mostly true. `;
-    } else if (falseClaims > trueClaims) {
-      summary += `${falseClaims} found to be false or mostly false. `;
+    if (verifiedClaims.length === 1) {
+      // Single claim - use the LLM's explanation for context
+      const claim = verifiedClaims[0];
+      const claimText =
+        claim.claim.slice(0, 60) + (claim.claim.length > 60 ? "..." : "");
+
+      summary = `Claim: "${claimText}"\n\n`;
+      summary += `Verdict: ${claim.verdict} (${claim.confidence}% confidence)\n\n`;
+
+      // Add the LLM's detailed explanation
+      if (claim.explanation) {
+        summary += `Context: ${claim.explanation}\n\n`;
+      }
+
+      summary += `Credibility Score: ${credibilityScore}/100\n\n`;
+
+      // Add source links for verification
+      if (sources.length > 0) {
+        summary += `Sources (click to verify):\n`;
+        sources.slice(0, 5).forEach((source, i) => {
+          // Extract domain name for display
+          const domain = source.replace(/^https?:\/\//, "").split("/")[0];
+          summary += `${i + 1}. ${domain}\n   ${source}\n`;
+        });
+      }
     } else {
-      summary += "mixed results with conflicting evidence. ";
+      // Multiple claims - show breakdown
+      const trueClaims = verifiedClaims.filter((c: any) =>
+        c.verdict.includes("True"),
+      ).length;
+      const falseClaims = verifiedClaims.filter((c: any) =>
+        c.verdict.includes("False"),
+      ).length;
+
+      summary = `Analysis of ${verifiedClaims.length} claim(s):\n\n`;
+
+      verifiedClaims.forEach((claim: any, i: number) => {
+        const claimText =
+          claim.claim.slice(0, 50) + (claim.claim.length > 50 ? "..." : "");
+        summary += `${i + 1}. "${claimText}"\n`;
+        summary += `   Verdict: ${claim.verdict} (${claim.confidence}% confidence)\n`;
+        if (claim.explanation) {
+          summary += `   ${claim.explanation.slice(0, 150)}...\n`;
+        }
+        summary += `\n`;
+      });
+
+      summary += `Overall Credibility: ${credibilityScore}/100\n\n`;
+
+      // Add source links
+      if (sources.length > 0) {
+        summary += `Sources:\n`;
+        sources.slice(0, 5).forEach((source, i) => {
+          const domain = source.replace(/^https?:\/\//, "").split("/")[0];
+          summary += `${i + 1}. ${domain}\n   ${source}\n`;
+        });
+      }
     }
-    summary += `Overall credibility score: ${credibilityScore}/100.`;
 
     console.log("📝 Summary:", summary);
     console.log("✅ Credibility calculation complete!\n");

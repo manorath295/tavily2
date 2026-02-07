@@ -3,27 +3,36 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { getChatModel } from "../shared/model";
 import { webSearch } from "../utils/webSearch";
 
-const VERIFICATION_PROMPT = `You are a fact-checking expert. Your ONLY job is to analyze the evidence provided from web searches and determine if the claim is supported by that evidence.
+const VERIFICATION_PROMPT = `You are a fact-checking expert. Analyze the evidence and provide a clear, user-friendly explanation.
 
 CRITICAL RULES:
-1. Base your verdict ONLY on the evidence provided below
+1. Base your verdict ONLY on the evidence provided
 2. DO NOT use your own knowledge or training data
-3. If multiple credible sources support the claim, it is likely TRUE
-4. If multiple credible sources contradict the claim, it is likely FALSE
-5. If sources are mixed or unclear, mark as MIXED or UNVERIFIABLE
+3. Write explanations in PLAIN LANGUAGE for regular users
+4. DO NOT use cryptic references like [N1], [W2], etc.
+5. Instead, describe what the sources say clearly
 
-Rate the claim as:
-- "True": Fully supported by the provided evidence (3+ sources agree)
-- "Mostly True": Largely supported by evidence with minor discrepancies
-- "Mixed": Evidence is contradictory or unclear
+Verdicts:
+- "True": Fully supported by evidence (3+ sources agree)
+- "Mostly True": Largely supported with minor discrepancies
+- "Mixed": Evidence is contradictory
 - "Mostly False": Largely contradicted by evidence
-- "False": Completely contradicted by the provided evidence (3+ sources disagree)
-- "Unverifiable": Insufficient or unreliable evidence
+- "False": Completely contradicted (3+ sources disagree)
+- "Unverifiable": Insufficient evidence
 
-Provide a confidence score (0-100) based on:
-- Number of sources agreeing
-- Quality/credibility of sources
-- Consistency of information
+EXPLANATION FORMAT (IMPORTANT):
+Write a clear, structured explanation that users can understand:
+
+1. Start with the main finding (what's actually true)
+2. Clarify any nuances or partial truths
+3. Mention what sources say (describe, don't just cite numbers)
+4. Keep it concise (2-3 sentences max)
+
+GOOD EXAMPLE:
+"The claim is partially misleading. While Virat Kohli did retire from Test cricket in January 2026, he continues to play ODI and T20 formats. Multiple news sources confirm he is still an active international cricketer, with recent articles discussing his ongoing participation in limited-overs cricket."
+
+BAD EXAMPLE (DON'T DO THIS):
+"Sources [N1], [N4] discuss his continued play. Wikipedia [W1] and [W2] refer to him as active. Some sources [1], [N2] mention Test retirement."
 
 Format your response as JSON:
 {
@@ -36,6 +45,7 @@ interface ClaimVerificationResult {
   claim: string;
   verdict: string;
   confidence: number;
+  explanation?: string; // Optional: LLM's detailed explanation
   evidence: Array<{
     source: string;
     title: string;
@@ -109,13 +119,46 @@ export const verifyClaimsStep = RunnableLambda.from(async (input: any) => {
       } catch (e) {
         const errorMsg = e instanceof Error ? e.message : String(e);
         console.log(`⚠️ Wikipedia service error: ${errorMsg}`);
-        console.log("   Continuing with Tavily only");
+        console.log("   Continuing without Wikipedia");
       }
 
-      // Format evidence from Tavily
-      let evidenceContext = searchResults
+      // Try to get Google News results (optional)
+      let newsContext = "";
+      try {
+        const { searchGoogleNews } = await import("../utils/googleNews");
+        const newsResults = await searchGoogleNews(claim, 5);
+
+        if (newsResults.length > 0) {
+          console.log(`✅ Google News returned ${newsResults.length} results`);
+          console.log("📰 News results:");
+          newsResults.forEach((n, i) => {
+            console.log(`  [N${i + 1}] ${n.title}`);
+            console.log(`       Source: ${n.source}`);
+            console.log(`       Published: ${n.publishedAt}`);
+          });
+
+          newsContext = "\n\n=== News (Google News) ===\n";
+          newsContext += newsResults
+            .map(
+              (n, i) =>
+                `[N${i + 1}] ${n.title}\nSource: ${n.source} (${n.publishedAt})\nURL: ${n.url}`,
+            )
+            .join("\n\n");
+        }
+      } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        console.log(`⚠️ Google News error: ${errorMsg}`);
+        console.log("   Continuing without Google News");
+      }
+
+      // Format evidence from all sources
+      let evidenceContext = "=== Web Search (Tavily) ===\n";
+      evidenceContext += searchResults
         .map((r, i) => `[${i + 1}] ${r.title}\n${r.snippet}\nSource: ${r.url}`)
         .join("\n\n");
+
+      // Add News context if available
+      evidenceContext += newsContext;
 
       // Add Wikipedia context if available
       evidenceContext += wikiContext;
@@ -146,6 +189,7 @@ export const verifyClaimsStep = RunnableLambda.from(async (input: any) => {
 
       let verdict = "Unverifiable";
       let confidence = 50;
+      let explanation = "";
 
       try {
         const jsonMatch = rawOutput.match(/\{[\s\S]*\}/);
@@ -153,6 +197,7 @@ export const verifyClaimsStep = RunnableLambda.from(async (input: any) => {
           const parsed = JSON.parse(jsonMatch[0]);
           verdict = parsed.verdict || "Unverifiable";
           confidence = parsed.confidence || 50;
+          explanation = parsed.explanation || "";
         }
       } catch (e) {
         console.log("⚠️ JSON parse failed for verdict, using fallback");
@@ -175,6 +220,7 @@ export const verifyClaimsStep = RunnableLambda.from(async (input: any) => {
         claim,
         verdict,
         confidence,
+        explanation, // Add explanation for context
         evidence: claimEvidence,
       });
 
